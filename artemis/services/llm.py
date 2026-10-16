@@ -556,8 +556,9 @@ def normalize_vertex_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
             while j < n and not isinstance(messages[j], AIMessage):
                 m = messages[j]
                 if isinstance(m, ToolMessage):
-                    if getattr(m, "name", None) is None and m.tool_call_id in tool_calls_map:
-                        tool_name = tool_calls_map[m.tool_call_id]
+                    tool_call_id = getattr(m, "tool_call_id", None)
+                    if getattr(m, "name", None) is None and tool_call_id in tool_calls_map:
+                        tool_name = tool_calls_map[tool_call_id]
                         if tool_name:
                             m = m.model_copy(update={"name": tool_name})
                     tool_msgs.append(m)
@@ -699,17 +700,21 @@ class RobustChatModelWrapper:
             model = model.bound
         return "VertexAI" in type(model).__name__
 
+    @staticmethod
+    def _prepare_vertex_inputs(args: tuple, kwargs: dict) -> tuple[tuple, dict]:
+        if args and isinstance(args[0], list):
+            args = (normalize_vertex_messages(args[0]), *args[1:])
+        elif "messages" in kwargs and isinstance(kwargs["messages"], list):
+            kwargs = dict(kwargs)
+            kwargs["messages"] = normalize_vertex_messages(kwargs["messages"])
+        elif "input" in kwargs and isinstance(kwargs["input"], list):
+            kwargs = dict(kwargs)
+            kwargs["input"] = normalize_vertex_messages(kwargs["input"])
+        return args, kwargs
+
     def _prepare_inputs(self, args: tuple, kwargs: dict) -> tuple[tuple, dict]:
         if self._is_vertex():
-            if args and isinstance(args[0], list):
-                norm = normalize_vertex_messages(args[0])
-                args = (norm, *args[1:])
-            elif "messages" in kwargs and isinstance(kwargs["messages"], list):
-                kwargs = dict(kwargs)
-                kwargs["messages"] = normalize_vertex_messages(kwargs["messages"])
-            elif "input" in kwargs and isinstance(kwargs["input"], list):
-                kwargs = dict(kwargs)
-                kwargs["input"] = normalize_vertex_messages(kwargs["input"])
+            args, kwargs = self._prepare_vertex_inputs(args, kwargs)
         return args, kwargs
 
     def invoke(self, *args, **kwargs):
@@ -871,14 +876,7 @@ async def acomplete(llm, *args, **kwargs):
     while hasattr(model, "bound"):
         model = model.bound
     if "VertexAI" in type(model).__name__:
-        if args and isinstance(args[0], list):
-            args = (normalize_vertex_messages(args[0]), *args[1:])
-        elif "messages" in kwargs and isinstance(kwargs["messages"], list):
-            kwargs = dict(kwargs)
-            kwargs["messages"] = normalize_vertex_messages(kwargs["messages"])
-        elif "input" in kwargs and isinstance(kwargs["input"], list):
-            kwargs = dict(kwargs)
-            kwargs["input"] = normalize_vertex_messages(kwargs["input"])
+        args, kwargs = RobustChatModelWrapper._prepare_vertex_inputs(args, kwargs)
 
     try:
         full_response = None
