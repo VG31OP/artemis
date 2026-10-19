@@ -254,3 +254,57 @@ async def test_non_vertex_model_preserves_order():
     # Non-vertex models must keep the original order: ToolMessage then HumanMessage
     assert isinstance(base.last_messages[2], ToolMessage)
     assert isinstance(base.last_messages[3], HumanMessage)
+
+
+def test_normalize_orphan_tool_message_backfills_fallback_name():
+    """Verify that orphan ToolMessages (no preceding AIMessage) have safe fallback names."""
+    history = [
+        HumanMessage(content="previous context"),
+        ToolMessage(content="orphan result", tool_call_id="call_orphan_123"),
+    ]
+
+    norm = normalize_vertex_messages(history)
+
+    # Underlying history remains untouched
+    assert history[1].name is None
+
+    # Outbound normalized copy gets tool_call_id as fallback name
+    assert len(norm) == 2
+    assert isinstance(norm[1], ToolMessage)
+    assert norm[1].name == "call_orphan_123"
+
+    # Serializer must produce valid function_response without crashing
+    _, norm_contents = _parse_chat_history_gemini(norm, None)
+    assert len(norm_contents) == 1
+    assert norm_contents[0].parts[1].function_response.name == "call_orphan_123"
+
+
+def test_normalize_unmatched_tool_call_id_in_turn():
+    """Verify that a ToolMessage with an unmatched ID in a tool turn gets a safe fallback name."""
+    history = [
+        HumanMessage(content="run action"),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "click", "args": {}, "id": "matched_id"}],
+        ),
+        ToolMessage(content="unmatched result", tool_call_id="unknown_tool_call"),
+    ]
+
+    norm = normalize_vertex_messages(history)
+
+    # Underlying history remains untouched
+    assert history[2].name is None
+
+    # Falls back to tool_call_id safely rather than leaving name as None
+    assert norm[2].name == "unknown_tool_call"
+
+
+def test_normalize_tool_message_retains_existing_name():
+    """Verify that a ToolMessage with an explicit name is preserved."""
+    history = [
+        HumanMessage(content="run action"),
+        ToolMessage(content="result", tool_call_id="c1", name="custom_tool"),
+    ]
+
+    norm = normalize_vertex_messages(history)
+    assert norm[1].name == "custom_tool"

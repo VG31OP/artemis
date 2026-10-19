@@ -533,7 +533,8 @@ def normalize_vertex_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     in a tool-call turn are positioned before ToolMessages, ensuring LangChain's
     Vertex serializer generates [text, functionResponse] part ordering without
     altering the underlying stored conversation history. It also ensures each
-    ToolMessage has its 'name' populated from the preceding AIMessage tool calls.
+    ToolMessage has its 'name' populated from the preceding AIMessage tool calls,
+    or falls back safely to tool_call_id / 'tool' for orphan or unmatched messages.
     """
     if not messages or not isinstance(messages, list):
         return messages
@@ -543,6 +544,9 @@ def normalize_vertex_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     n = len(messages)
     while i < n:
         msg = messages[i]
+        if isinstance(msg, ToolMessage) and getattr(msg, "name", None) is None:
+            fallback_name = getattr(msg, "tool_call_id", None) or "tool"
+            msg = msg.model_copy(update={"name": fallback_name})
         result.append(msg)
         if isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
             ai_msg = msg
@@ -557,10 +561,9 @@ def normalize_vertex_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
                 m = messages[j]
                 if isinstance(m, ToolMessage):
                     tool_call_id = getattr(m, "tool_call_id", None)
-                    if getattr(m, "name", None) is None and tool_call_id in tool_calls_map:
-                        tool_name = tool_calls_map[tool_call_id]
-                        if tool_name:
-                            m = m.model_copy(update={"name": tool_name})
+                    if getattr(m, "name", None) is None:
+                        tool_name = tool_calls_map.get(tool_call_id) or tool_call_id or "tool"
+                        m = m.model_copy(update={"name": tool_name})
                     tool_msgs.append(m)
                 else:
                     non_tool_msgs.append(m)
